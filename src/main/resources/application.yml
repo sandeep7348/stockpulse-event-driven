@@ -1,0 +1,76 @@
+spring:
+  application:
+    name: stock-alert-system
+  config:
+    # Local secrets such as UPSTOX_ACCESS_TOKEN. This file is ignored by git.
+    import: optional:file:.env[.properties]
+  task:
+    scheduling:
+      pool:
+        # A slow polling round or catalog download must not hold up the other scheduled jobs.
+        size: 3
+  mongodb:
+    uri: ${MONGODB_URI:mongodb://localhost:27027/stockalert}
+  data:
+    mongodb:
+      auto-index-creation: true
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6390}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+    consumer:
+      auto-offset-reset: earliest
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+app:
+  jwt:
+    # Blank means a random key per run. Set JWT_SECRET (32+ bytes) to keep tokens valid across restarts.
+    secret: ${JWT_SECRET:}
+    ttl: 1h
+  feed:
+    # yahoo: NSE prices polled from Yahoo Finance's unofficial endpoint, no account needed.
+    # simulated: random prices that keep moving when the market is closed.
+    # upstox: live prices, needs an Upstox account and UPSTOX_ACCESS_TOKEN.
+    source: ${FEED_SOURCE:yahoo}
+    interval: 1s
+    # Simulator only. false lets the demo run at any time; true only produces ticks during NSE hours.
+    respect-market-hours: ${FEED_RESPECT_MARKET_HOURS:false}
+  yahoo:
+    base-url: https://query1.finance.yahoo.com
+    poll-interval: 30s
+    user-agent: Mozilla/5.0 (compatible; stock-alert-system)
+    # Yahoo's real limits are not published, so these are cautious starting points.
+    max-per-round: 50
+    on-demand-per-minute: 30
+  catalog:
+    # Public list of NSE instruments, used only for the Yahoo feed's stock search. Needs no account.
+    url: https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz
+  upstox:
+    base-url: https://api.upstox.com
+    access-token: ${UPSTOX_ACCESS_TOKEN:}
+  market:
+    # NSE trading holidays as yyyy-MM-dd. Copy these from the official NSE circular each year.
+    holidays: []
+  # ISINs identify each stock on Upstox, from its published NSE instrument list.
+  # Base prices only seed the simulator. They are illustrative, not market data.
+  instruments:
+    - { symbol: RELIANCE, name: Reliance Industries, isin: INE002A01018, base-price: 1400.00 }
+    - { symbol: TCS, name: Tata Consultancy Services, isin: INE467B01029, base-price: 3500.00 }
+    - { symbol: HDFCBANK, name: HDFC Bank, isin: INE040A01034, base-price: 1700.00 }
+    - { symbol: INFY, name: Infosys, isin: INE009A01021, base-price: 1500.00 }
+    - { symbol: ICICIBANK, name: ICICI Bank, isin: INE090A01021, base-price: 1300.00 }
+    - { symbol: SBIN, name: State Bank of India, isin: INE062A01020, base-price: 800.00 }
+    - { symbol: BHARTIARTL, name: Bharti Airtel, isin: INE397D01024, base-price: 1800.00 }
+    - { symbol: ITC, name: ITC, isin: INE154A01025, base-price: 420.00 }
+    - { symbol: LT, name: Larsen & Toubro, isin: INE018A01030, base-price: 3500.00 }
+    - { symbol: HINDUNILVR, name: Hindustan Unilever, isin: INE030A01027, base-price: 2400.00 }

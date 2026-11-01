@@ -1,0 +1,108 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Jobs only get the access they ask for.
+permissions:
+  contents: read
+
+# A newer push to the same branch replaces a run still in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      # Integration tests start real Kafka, Redis and MongoDB through Testcontainers.
+      - name: Build and test
+        run: |
+          chmod +x mvnw
+          ./mvnw -B -ntp verify
+      - name: Keep test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: target/surefire-reports
+          retention-days: 7
+
+  frontend:
+    name: Frontend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Run tests
+        run: npm test
+      - name: Type-check and build
+        run: npm run build
+
+  images:
+    name: Docker image (${{ matrix.image.name }})
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: app
+            context: .
+          - name: web
+            context: frontend
+    env:
+      # Pull requests only prove the image builds. Publishing needs a merge to main.
+      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Work out image names
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ matrix.image.name }}
+          tags: |
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and publish
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
