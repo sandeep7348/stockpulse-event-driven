@@ -1,10 +1,11 @@
-# Redis and MongoDB use non-default host ports so this project cannot connect to another
-# project's databases on the same machine by accident.
+
 name: stock-alert
 
 services:
+
   kafka:
     image: apache/kafka:3.9.1
+    container_name: stock-alert-kafka
     ports:
       - "9092:9092"
     environment:
@@ -21,13 +22,16 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      test:
+        - CMD-SHELL
+        - /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
       interval: 10s
       timeout: 10s
       retries: 10
 
   redis:
     image: redis:7.4-alpine
+    container_name: stock-alert-redis
     ports:
       - "6390:6379"
     healthcheck:
@@ -38,27 +42,37 @@ services:
 
   mongodb:
     image: mongo:8.0
+    container_name: stock-alert-mongodb
     ports:
       - "27027:27017"
     volumes:
       - mongo-data:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 })"]
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - db.runCommand({ ping: 1 })
       interval: 5s
       timeout: 5s
       retries: 10
 
   app:
-    build: .
-    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stockpulse-event:latest
+    container_name: stockpulse-event
+    restart: unless-stopped
     ports:
-      - "${APP_PORT:-8080}:8080"
+      - "8085:8080"
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
       MONGODB_URI: mongodb://mongodb:27017/stockalert
-      JWT_SECRET: ${JWT_SECRET:-}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be configured}
       FEED_SOURCE: ${FEED_SOURCE:-yahoo}
       UPSTOX_ACCESS_TOKEN: ${UPSTOX_ACCESS_TOKEN:-}
     depends_on:
@@ -70,10 +84,12 @@ services:
         condition: service_healthy
 
   web:
-    build: frontend
-    profiles: ["app"]
+    build:
+      context: ./frontend
+    container_name: stock-alert-web
+    restart: unless-stopped
     ports:
-      - "${WEB_PORT:-8088}:8080"
+      - "8088:8080"
     environment:
       BACKEND_URL: http://app:8080
     depends_on:
